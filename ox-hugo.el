@@ -73,7 +73,10 @@ This variable can be set to either `toml' or `yaml'."
                    (:hugo-url         "HUGO_URL" nil nil)
                    (:hugo-export-dir  "HUGO_EXPORT_DIR" nil nil)
                    (:hugo-section     "HUGO_SECTION" "posts" nil)
-                   (:hugo-static-images "HUGO_STATIC_IMAGES" "images" nil)))
+                   (:hugo-static-images "HUGO_STATIC_IMAGES" "images" nil)
+                   (:hugo-menu-name "HUGO_MENU_NAME" "main" nil)
+                   (:hugo-menu-weight "HUGO_MENU_WEIGHT" 20 nil)
+                   (":hugo-menu-parent" "HUGO_MENU_PARENT" nil nil)))
 
 
 ;;; Transcode Functions
@@ -201,7 +204,7 @@ copy local images and rewrite link paths to make blogging more seamless."
         (progn
           (unless (file-exists-p exported-image)
             (copy-file full-path exported-image))
-          (concat "/static/" (file-name-as-directory (plist-get info :hugo-static-images)) file-name))
+          (concat "/" (file-name-as-directory (plist-get info :hugo-static-images)) file-name))
       path
       )))
 
@@ -219,18 +222,23 @@ copy local images and rewrite link paths to make blogging more seamless."
          (categories  (org-hugo--get-list-metadata   info :hugo-categories))
          (slug        (org-hugo--get-string-metadata info :hugo-slug))
          (url         (org-hugo--get-string-metadata info :hugo-url))
+         (menu        (org-hugo--get-raw-metadata info :hugo-menu-string))
 
          (data (list "title" title "date" date))
          (data (if description (plist-put data "description" description) data))
          (data (if tags        (plist-put data "tags" tags) data))
          (data (if categories  (plist-put data "categories" categories) data))
          (data (if slug        (plist-put data "slug" slug) data))
-         (data (if url         (plist-put data "url" url) data)))
+         (data (if url         (plist-put data "url" url) data))
+         (data (if menu        (plist-put data "menu" menu) data)))
 
-    (message "%s" data)
+    (message "data: %s" data)
+    (message "info: %s" info)
+    
     (cond ((string= mt-format "toml") (org-hugo--encode-metadata-to-toml data))
           ((string= mt-format "yaml") (org-hugo--encode-metadata-to-yaml data))
-          "")))
+          "")
+     (org-hugo--collect-menu-metadata info)))
 
 (defun org-hugo--get-metadata-title (info)
   "Get title of hugo.
@@ -266,12 +274,33 @@ KEY is a key of hugo metadata."
     (cond ((string-empty-p value) nil)
           (t (org-hugo-string--wrap-quotes value)))))
 
+(defun org-hugo--get-raw-metadata (info key)
+  "Get hugo metadata of string type.
+INFO is a plist holding export options.
+KEY is a key of hugo metadata."
+  (let ((value (org-export-data (plist-get info key) info))
+        (key (substring (symbol-name key) 1)))
+    (cond ((string-empty-p value) nil)
+          (t  value))))
+
 (defun org-hugo-string--wrap-quotes (str)
   "Wrap double quotes to string."
   (cond ((string-empty-p str) "")
         ((and (string= (substring str 0 1) "\"")
               (string= (substring str -1) "\"")) str)
         (t (concat "\"" str "\""))))
+
+(defun org-hugo--collect-menu-metadata (info)
+  "collect all the menu-related metadata and return a nested plist of the values
+to be used by toml and yaml frontmatter creators."
+  (message "info: %s" info)
+  (let* ((menu-atts '(:hugo-menu-parent "parent" :hugo-menu-weight "weight"))
+         (menu-name (plist-get info :hugo-menu-name))
+         (atts-plist (cl-loop for att in (plist-get-keys menu-atts)
+                              collect (plist-get menu-atts att) 
+                              collect (symbol-name (plist-get info att)))))
+    (plist-put '() menu-name atts-plist)))
+
 
 (defun org-hugo--encode-metadata-to-toml (data)
   "Encode hugo metadata to toml format."
@@ -306,7 +335,8 @@ KEY is a key of hugo metadata."
   "Add frontmatter to  body of document. 
 BODY is the result of the export. BACKEND is always going to be hugo.  INFO is a plist
 holding export options."
-  (format "%s\n%s" (org-hugo-metadata info) body))
+  ;;(format "%s\n%s" (org-hugo-metadata info) body)
+  (format "%s\n%s" (org-hugo--collect-menu-metadata info) body))
 
 
 ;;; Interactive function
@@ -324,7 +354,8 @@ A non-nil optional argument ASYNC means the process should happen
 asynchronously.  The resulting buffer should be accessible
 through the `org-export-stack' interface.
 
-When optional argument SUBTREEP is non-nil, export the sub-tree
+When option
+al argument SUBTREEP is non-nil, export the sub-tree
 at point, extracting information from the headline properties
 first.
 
@@ -386,33 +417,6 @@ Return output file's name."
                           (file-name-as-directory (plist-get info :hugo-section))))
          (outfile (org-export-output-file-name ".md" subtreep pub-dir)))
     (org-export-to-file 'hugo outfile async subtreep visible-only)))
-
-;;;###autoload
-(defun org-hugo-walk-headlines ()
-  "Publish each 1st-level headline to hugo-mode"
-  (interactive)
-  (org-map-entries
-   '(lambda ()
-      (let* ((entry (org-element-at-point))
-             (level (org-element-property :level entry))
-             (commentedp (org-element-property :commentedp entry))
-             (tags (org-element-property :tags entry)))
-        (message "on headline %s\n level is %s \n tags are %s \n commentedp is %s\n test value is %s" 
-                 (org-element-property :raw-value entry)
-                 level tags commentedp
-                 (and  (eq 1 level)
-                       (not (member "noexport" tags))
-                       (not commentedp))
-                 )
-        (if (and  (eq 1 level)
-                  (not (member "noexport" tags))
-                  (not commentedp))
-            (org-hugo-export-to-md nil t)))))
-  ;; (org-publish-subtrees-to
-  ;;  (quote hugo) (buffer-file-name)
-  ;;  md nil
-  ;;  (concat (file-name-as-directory hugo-content-dir) hugo-section))
-  )
 
 ;;;###autoload
 (defun org-hugo-publish-to-md (plist filename pub-dir)
